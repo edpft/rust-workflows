@@ -1,12 +1,13 @@
 name: Security audit
-
 on:
-  push:
-    paths:
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
-  schedule:
-    - cron: '0 0 * * *'
+  workflow_call:
+    inputs:
+      config-path:
+        required: true
+        type: string
+    secrets:
+      token:
+        required: true
 
 jobs:
   audit:
