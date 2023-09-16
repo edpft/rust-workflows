@@ -1,13 +1,6 @@
 name: Continuous integration
 on:
   workflow_call:
-    inputs:
-      config-path:
-        required: true
-        type: string
-    secrets:
-      token:
-        required: true
 
 jobs:
   format:
