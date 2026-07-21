@@ -1,0 +1,33 @@
+name: Self check
+
+# Every other workflow here is `workflow_call` only, so nothing in this repo
+# ran on its own account and the reusables everything else depends on were
+# never checked. A syntax error would have surfaced in a calling repo.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Install nix
+        uses: nixbuild/nix-quick-install-action@v34
+        with:
+          nix_conf: |
+            access-tokens = github.com=${{ github.token }}
+
+      # nixpkgs' actionlint brings shellcheck with it, so the `run:` scripts
+      # are linted too, not just the workflow schema.
+      - name: Run actionlint
+        run: nix run nixpkgs#actionlint -- .github/workflows/*.yml
