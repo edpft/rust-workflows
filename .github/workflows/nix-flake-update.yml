@@ -17,6 +17,14 @@ on:
         required: false
         type: string
         default: "chore(deps): update flake.lock"
+      verify:
+        description: >-
+          Run `nix flake check` against the updated inputs before opening the
+          pull request, so a broken update fails here rather than becoming a
+          pull request that nothing has verified.
+        required: false
+        type: boolean
+        default: true
       runs-on:
         description: The runner to use.
         required: false
@@ -25,10 +33,10 @@ on:
     secrets:
       token:
         description: >-
-          A personal access token to push and open the pull request as. Without
-          one the default GITHUB_TOKEN is used, and the resulting pull request
-          will not trigger CI — GitHub suppresses workflow runs for events
-          raised by that token, to avoid recursion.
+          A personal access token to push and open the pull request as. Only
+          needed if the pull request must show its own CI run: GitHub raises no
+          workflow events for the default GITHUB_TOKEN, to avoid recursion.
+          Leaving `verify` on covers the same ground without a token.
         required: false
 
 permissions:
@@ -49,7 +57,18 @@ jobs:
         uses: nixbuild/nix-quick-install-action@v34
         with:
           nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
             access-tokens = github.com=${{ github.token }}
+
+      # Restore only: an update invalidates most of the cache by definition,
+      # and saving it here would evict what the ordinary CI runs rely on.
+      - name: Restore cache
+        if: ${{ inputs.verify }}
+        uses: nix-community/cache-nix-action/restore@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
 
       - name: Update flake inputs
         id: update
@@ -66,6 +85,12 @@ jobs:
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      # The pull request this opens will not trigger CI unless a personal
+      # access token was supplied, so verify the update before proposing it.
+      - name: Verify the update
+        if: ${{ inputs.verify && steps.update.outputs.changed == 'true' }}
+        run: nix flake check -L
 
       - name: Open pull request
         if: steps.update.outputs.changed == 'true'

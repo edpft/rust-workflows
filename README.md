@@ -25,14 +25,21 @@ jobs:
 defaulting to `x86_64-linux` on `ubuntu-latest`; override them together.
 
 `nix-flake-update.yml` opens its pull request with the default `GITHUB_TOKEN`,
-and GitHub does not raise workflow events for that token — so the pull request
-arrives with no CI run against it. Pass a personal access token as the `token`
-secret if you want the update checked before you merge it:
+and GitHub raises no workflow events for that token — so the pull request will
+not trigger CI. Rather than requiring a personal access token, it runs
+`nix flake check` against the updated inputs itself, before opening anything:
+a broken update fails the scheduled run and never becomes a pull request.
+
+Pass a token only if you want the checks to appear on the pull request itself
+rather than in the scheduled run, and set `verify: false` to avoid running them
+twice:
 
 ```yaml
 jobs:
   update:
     uses: edpft/rust-workflows/.github/workflows/nix-flake-update.yml@main
+    with:
+      verify: false
     secrets:
       token: ${{ secrets.FLAKE_UPDATE_TOKEN }}
 ```
