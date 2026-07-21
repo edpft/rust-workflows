@@ -4,8 +4,44 @@ on:
   workflow_call:
     inputs:
       package-name:
-        required: true
+        description: >-
+          DEPRECATED and ignored. release-please v4 removed this input; set
+          `$.packages[path].package-name` in a release-please-config.json
+          instead. Retained only so existing callers keep working.
+        required: false
         type: string
+      release-type:
+        description: The release-please strategy to use.
+        required: false
+        type: string
+        default: rust
+      path:
+        description: Release from a subdirectory rather than the repo root.
+        required: false
+        type: string
+      target-branch:
+        description: The branch to open release pull requests against.
+        required: false
+        type: string
+      runs-on:
+        description: The runner to use.
+        required: false
+        type: string
+        default: ubuntu-latest
+    secrets:
+      token:
+        description: >-
+          A personal access token to act as. Needed only if a release should
+          trigger further workflows — releases made with the default
+          GITHUB_TOKEN deliberately do not.
+        required: false
+    outputs:
+      release-created:
+        description: Whether a release was cut on this run.
+        value: ${{ jobs.release-please.outputs.release-created }}
+      tag-name:
+        description: The tag of the release, if one was created.
+        value: ${{ jobs.release-please.outputs.tag-name }}
 
 permissions:
   contents: write
@@ -13,9 +49,16 @@ permissions:
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
+    outputs:
+      release-created: ${{ steps.release.outputs.release_created }}
+      tag-name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: google-github-actions/release-please-action@v4
+      # The action moved from google-github-actions to googleapis at v4.
+      - id: release
+        uses: googleapis/release-please-action@v4
         with:
-          release-type: rust
-          package-name: ${{ inputs.package-name }}
+          release-type: ${{ inputs.release-type }}
+          path: ${{ inputs.path }}
+          target-branch: ${{ inputs.target-branch }}
+          token: ${{ secrets.token || github.token }}

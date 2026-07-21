@@ -1,32 +1,42 @@
 name: Test
 on:
   workflow_call:
+    inputs:
+      toolchain:
+        description: >-
+          The Rust toolchain to install. This action does not read
+          rust-toolchain.toml, so pass your pinned version here if you have one.
+        type: string
+        required: false
+        default: stable
+      runs-on:
+        description: The runner to use.
+        type: string
+        required: false
+        default: ubuntu-latest
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: stable
+          toolchain: ${{ inputs.toolchain }}
 
       - name: Setup cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+        uses: Swatinem/rust-cache@v2
 
+      # Deliberately not `--all-targets`: that flag *excludes* doctests.
       - name: Run tests
-        run: |
-          cargo test
+        run: cargo test --locked

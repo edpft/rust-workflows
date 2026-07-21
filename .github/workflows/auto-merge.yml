@@ -1,6 +1,24 @@
 name: Dependabot auto-merge
 on:
   workflow_call:
+    inputs:
+      allow-major:
+        description: >-
+          Auto-merge major version bumps too. Off by default: a major bump is
+          the one kind that can break you without the tests noticing.
+        required: false
+        type: boolean
+        default: false
+      merge-method:
+        description: How to merge — `merge`, `squash`, or `rebase`.
+        required: false
+        type: string
+        default: merge
+      runs-on:
+        description: The runner to use.
+        required: false
+        type: string
+        default: ubuntu-latest
 
 permissions:
   contents: write
@@ -8,11 +26,21 @@ permissions:
 
 jobs:
   dependabot:
-    runs-on: ubuntu-latest
-    if: ${{ github.actor == 'dependabot[bot]' }}
+    runs-on: ${{ inputs.runs-on }}
+    # Check the PR author rather than `github.actor`, which is whoever
+    # triggered this run — a human re-running the job, for instance.
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
     steps:
-      - name: Enable auto-merge for Dependabot PRs
-        run: gh pr merge --auto --merge "$PR_URL"
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Enable auto-merge
+        if: ${{ inputs.allow-major || steps.metadata.outputs.update-type != 'version-update:semver-major' }}
+        run: gh pr merge --auto --"$MERGE_METHOD" "$PR_URL"
         env:
-          PR_URL: ${{github.event.pull_request.html_url}}
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          MERGE_METHOD: ${{ inputs.merge-method }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ github.token }}
