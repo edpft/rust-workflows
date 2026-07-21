@@ -1,0 +1,132 @@
+name: Update flake lock
+
+# Dependabot does not understand flake.lock, so nix inputs would otherwise
+# drift indefinitely. This runs `nix flake update` on whatever schedule the
+# caller sets and opens a pull request, so the update goes through CI like
+# any other change rather than landing unreviewed.
+on:
+  workflow_call:
+    inputs:
+      branch:
+        description: The branch to push the update to.
+        required: false
+        type: string
+        default: nix-flake-update
+      pr-title:
+        description: Title for the pull request, and the commit message.
+        required: false
+        type: string
+        default: "chore(deps): update flake.lock"
+      verify:
+        description: >-
+          Run `nix flake check` against the updated inputs before opening the
+          pull request, so a broken update fails here rather than becoming a
+          pull request that nothing has verified.
+        required: false
+        type: boolean
+        default: true
+      runs-on:
+        description: The runner to use.
+        required: false
+        type: string
+        default: ubuntu-latest
+    secrets:
+      token:
+        description: >-
+          A personal access token to push and open the pull request as. Only
+          needed if the pull request must show its own CI run: GitHub raises no
+          workflow events for the default GITHUB_TOKEN, to avoid recursion.
+          Leaving `verify` on covers the same ground without a token.
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    name: Update flake lock
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.token || github.token }}
+
+      - name: Install nix
+        uses: nixbuild/nix-quick-install-action@v34
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+            access-tokens = github.com=${{ github.token }}
+
+      # Restore only: an update invalidates most of the cache by definition,
+      # and saving it here would evict what the ordinary CI runs rely on.
+      - name: Restore cache
+        if: ${{ inputs.verify }}
+        uses: nix-community/cache-nix-action/restore@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: Update flake inputs
+        id: update
+        run: |
+          {
+            echo "log<<FLAKE_UPDATE_LOG"
+            nix flake update 2>&1 | grep '^•' || true
+            echo "FLAKE_UPDATE_LOG"
+          } >> "$GITHUB_OUTPUT"
+
+          if git diff --quiet -- flake.lock; then
+            echo "No input changed."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The pull request this opens will not trigger CI unless a personal
+      # access token was supplied, so verify the update before proposing it.
+      - name: Verify the update
+        if: ${{ inputs.verify && steps.update.outputs.changed == 'true' }}
+        run: nix flake check -L
+
+      - name: Open pull request
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git switch --force-create "$BRANCH"
+          git add flake.lock
+          git commit --message "$TITLE"
+          git push --force origin "$BRANCH"
+
+          # Force-pushing an existing branch updates its open pull request, so
+          # only open one when there is not already one waiting.
+          existing=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')
+          if [ -z "$existing" ]; then
+            # Tildes rather than backticks so the fence survives shell quoting.
+            {
+              echo "Automated flake input update."
+              echo
+              echo "~~~"
+              echo "$LOG"
+              echo "~~~"
+            } > pr-body.md
+
+            gh pr create \
+              --base "$BASE" \
+              --head "$BRANCH" \
+              --title "$TITLE" \
+              --body-file pr-body.md
+          else
+            echo "Updated existing pull request #${existing}."
+          fi
+        env:
+          BASE: ${{ github.ref_name }}
+          BRANCH: ${{ inputs.branch }}
+          TITLE: ${{ inputs.pr-title }}
+          LOG: ${{ steps.update.outputs.log }}
+          GH_TOKEN: ${{ secrets.token || github.token }}
