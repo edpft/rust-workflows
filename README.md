@@ -13,6 +13,7 @@ truth, and these workflows just run whatever it declares.
 | --- | --- |
 | `nix-checks.yml` | Evaluates `.#checks.<system>` and builds each one as a separate matrix job. Adding a check to `flake.nix` adds a job here. |
 | `nix-audit.yml` | Refreshes the `advisory-db` flake input, then builds the caller's audit check. For scheduled runs; the pinned check already runs under `nix-checks.yml`. |
+| `nix-flake-update.yml` | Runs `nix flake update` and opens a pull request, so inputs do not drift. Dependabot does not understand `flake.lock`. |
 
 ```yaml
 jobs:
@@ -20,8 +21,21 @@ jobs:
     uses: edpft/rust-workflows/.github/workflows/nix-checks.yml@main
 ```
 
-Both accept `system` and `runs-on` inputs, defaulting to `x86_64-linux` on
-`ubuntu-latest`; override them together.
+`nix-checks.yml` and `nix-audit.yml` accept `system` and `runs-on` inputs,
+defaulting to `x86_64-linux` on `ubuntu-latest`; override them together.
+
+`nix-flake-update.yml` opens its pull request with the default `GITHUB_TOKEN`,
+and GitHub does not raise workflow events for that token — so the pull request
+arrives with no CI run against it. Pass a personal access token as the `token`
+secret if you want the update checked before you merge it:
+
+```yaml
+jobs:
+  update:
+    uses: edpft/rust-workflows/.github/workflows/nix-flake-update.yml@main
+    secrets:
+      token: ${{ secrets.FLAKE_UPDATE_TOKEN }}
+```
 
 ## Cargo repos
 
