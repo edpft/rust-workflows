@@ -1,0 +1,54 @@
+name: Nix security audit
+
+# The caller's `audit-deps` check already runs on every pull request, but only
+# against the advisory database pinned in flake.lock. This refreshes that input
+# first, so an advisory published after the lock file was written is still
+# caught by a scheduled run.
+on:
+  workflow_call:
+    inputs:
+      system:
+        description: The nix system to build the audit check for.
+        type: string
+        required: false
+        default: x86_64-linux
+      runs-on:
+        description: The runner to use. Must match `system`.
+        type: string
+        required: false
+        default: ubuntu-latest
+      check:
+        description: The name of the audit check in the caller's flake.
+        type: string
+        required: false
+        default: audit-deps
+      input:
+        description: The name of the advisory database flake input to refresh.
+        type: string
+        required: false
+        default: advisory-db
+
+jobs:
+  audit:
+    name: Audit dependencies
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Install nix
+        uses: nixbuild/nix-quick-install-action@v34
+        with:
+          nix_conf: |
+            access-tokens = github.com=${{ github.token }}
+
+      - name: Refresh advisory database
+        run: nix flake update "$INPUT"
+        env:
+          INPUT: ${{ inputs.input }}
+
+      - name: Run audit
+        run: nix build -L ".#checks.${SYSTEM}.${CHECK}"
+        env:
+          SYSTEM: ${{ inputs.system }}
+          CHECK: ${{ inputs.check }}

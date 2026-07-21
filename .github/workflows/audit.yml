@@ -1,34 +1,45 @@
 name: Security audit
 on:
   workflow_call:
+    inputs:
+      toolchain:
+        description: >-
+          The Rust toolchain to install. This action does not read
+          rust-toolchain.toml, so pass your pinned version here if you have one.
+        type: string
+        required: false
+        default: stable
+      runs-on:
+        description: The runner to use.
+        type: string
+        required: false
+        default: ubuntu-latest
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   audit:
     name: Audit dependencies
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: stable
+          toolchain: ${{ inputs.toolchain }}
 
-      - name: Setup cache
-        uses: actions/cache@v4
+      # A prebuilt binary, rather than `cargo install` compiling it from source.
+      - name: Install `cargo-audit`
+        uses: taiki-e/install-action@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-  
-      - name: Run audit
-        run: |
-          cargo install cargo-audit
-          cargo audit
+          tool: cargo-audit
 
+      # No cache: this reads Cargo.lock and builds nothing.
+      - name: Run audit
+        run: cargo audit

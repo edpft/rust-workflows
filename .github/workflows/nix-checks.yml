@@ -1,0 +1,102 @@
+name: Nix checks
+
+# For repos whose flake owns their checks: the caller's `checks` output is the
+# single source of truth, so adding a check to flake.nix adds a job here with
+# no change to the workflow. Non-nix repos should keep using the individual
+# check-formatting / lint / test / audit workflows instead.
+on:
+  workflow_call:
+    inputs:
+      system:
+        description: The nix system to evaluate and build checks for.
+        type: string
+        required: false
+        default: x86_64-linux
+      runs-on:
+        description: The runner to use. Must match `system`.
+        type: string
+        required: false
+        default: ubuntu-latest
+      max-store-size:
+        description: Size in bytes to garbage collect the nix store down to before saving the cache.
+        type: string
+        required: false
+        default: 5G
+
+jobs:
+  discover:
+    name: Discover checks
+    runs-on: ${{ inputs.runs-on }}
+    outputs:
+      checks: ${{ steps.list.outputs.checks }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Install nix
+        uses: nixbuild/nix-quick-install-action@v34
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+            access-tokens = github.com=${{ github.token }}
+
+      - name: Setup cache
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: ${{ inputs.max-store-size }}
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-last-accessed: P1DT12H
+          purge-primary-key: never
+
+      - name: List checks
+        id: list
+        run: |
+          checks=$(nix eval --json \
+            ".#checks.${SYSTEM}" \
+            --apply 'builtins.attrNames')
+          echo "checks=$checks" >> "$GITHUB_OUTPUT"
+        env:
+          SYSTEM: ${{ inputs.system }}
+
+  check:
+    name: ${{ matrix.check }}
+    needs: discover
+    runs-on: ${{ inputs.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        check: ${{ fromJson(needs.discover.outputs.checks) }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Install nix
+        uses: nixbuild/nix-quick-install-action@v34
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+            access-tokens = github.com=${{ github.token }}
+
+      - name: Setup cache
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: ${{ inputs.max-store-size }}
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-last-accessed: P1DT12H
+          purge-primary-key: never
+
+      - name: Run check
+        run: nix build -L ".#checks.${SYSTEM}.${CHECK}"
+        env:
+          SYSTEM: ${{ inputs.system }}
+          CHECK: ${{ matrix.check }}
