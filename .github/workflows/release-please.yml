@@ -28,6 +28,16 @@ on:
         required: false
         type: string
         default: ubuntu-latest
+      config-file:
+        description: >-
+          Path to a release-please-config.json. Required for Cargo
+          workspaces, which cannot use the single-package path.
+        required: false
+        type: string
+      manifest-file:
+        description: Path to a .release-please-manifest.json.
+        required: false
+        type: string
     secrets:
       token:
         description: >-
