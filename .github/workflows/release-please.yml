@@ -71,4 +71,6 @@ jobs:
           release-type: ${{ inputs.release-type }}
           path: ${{ inputs.path }}
           target-branch: ${{ inputs.target-branch }}
+          config-file: ${{ inputs.config-file }}
+          manifest-file: ${{ inputs.manifest-file }}
           token: ${{ secrets.token || github.token }}
