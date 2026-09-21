@@ -114,12 +114,12 @@ jobs:
   check:
     name: ${{ matrix.check }}
     needs: [discover, prebuild]
-    # `prebuild` is skipped when the input is empty, and a skipped need skips
-    # its dependents unless the condition says otherwise.
-    if: >-
-      !cancelled()
-      && needs.discover.result == 'success'
-      && needs.prebuild.result != 'failure'
+    # Run whatever `prebuild` did. It is skipped when the input is empty, and a
+    # skipped need would skip these too. And a failed prebuild must not skip
+    # them either: GitHub counts a skipped required check as passing, so the
+    # pull request would be mergeable on a build that does not compile. Run,
+    # rebuild the dependencies, and fail on their own account.
+    if: ${{ !cancelled() && needs.discover.result == 'success' }}
     runs-on: ${{ inputs.runs-on }}
     strategy:
       fail-fast: false
