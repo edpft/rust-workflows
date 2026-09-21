@@ -22,7 +22,21 @@ on:
         type: string
         required: false
         default: 5G
+      prebuild:
+        description: >-
+          A flake installable to build once, before the checks fan out, and save
+          to the cache they all restore — typically crane's `cargoArtifacts`.
+          Without it every check job builds the shared dependencies itself.
+        type: string
+        required: false
+        default: ''
 
+# Every job shares one cache key, and a key is written once: whichever job saves
+# first owns it and the rest log "Not saving a new cache". So exactly one job
+# saves. With `prebuild` that is the job holding the dependencies; without it,
+# `discover`, as before. The `-prebuilt` suffix keeps the two apart: a key
+# already written by a `discover` would otherwise be an exact hit, and the
+# prebuild would restore a store without its dependencies and decline to save.
 jobs:
   discover:
     name: Discover checks
@@ -44,7 +58,7 @@ jobs:
       - name: Setup cache
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'rust-toolchain.toml') }}
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'rust-toolchain.toml') }}${{ inputs.prebuild != '' && '-prebuilt' || '' }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: ${{ inputs.max-store-size }}
           purge: true
@@ -52,6 +66,7 @@ jobs:
           purge-created: 0
           purge-last-accessed: P1DT12H
           purge-primary-key: never
+          save: ${{ inputs.prebuild == '' }}
 
       - name: List checks
         id: list
@@ -63,9 +78,48 @@ jobs:
         env:
           SYSTEM: ${{ inputs.system }}
 
+  prebuild:
+    name: Build shared dependencies
+    if: inputs.prebuild != ''
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Install nix
+        uses: nixbuild/nix-quick-install-action@v34
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+            access-tokens = github.com=${{ github.token }}
+
+      - name: Setup cache
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'rust-toolchain.toml') }}${{ inputs.prebuild != '' && '-prebuilt' || '' }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: ${{ inputs.max-store-size }}
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-last-accessed: P1DT12H
+          purge-primary-key: never
+
+      - name: Build ${{ inputs.prebuild }}
+        run: nix build -L "$PREBUILD"
+        env:
+          PREBUILD: ${{ inputs.prebuild }}
+
   check:
     name: ${{ matrix.check }}
-    needs: discover
+    needs: [discover, prebuild]
+    # Run whatever `prebuild` did. It is skipped when the input is empty, and a
+    # skipped need would skip these too. And a failed prebuild must not skip
+    # them either: GitHub counts a skipped required check as passing, so the
+    # pull request would be mergeable on a build that does not compile. Run,
+    # rebuild the dependencies, and fail on their own account.
+    if: ${{ !cancelled() && needs.discover.result == 'success' }}
     runs-on: ${{ inputs.runs-on }}
     strategy:
       fail-fast: false
@@ -86,7 +140,7 @@ jobs:
       - name: Setup cache
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'rust-toolchain.toml') }}
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'rust-toolchain.toml') }}${{ inputs.prebuild != '' && '-prebuilt' || '' }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: ${{ inputs.max-store-size }}
           purge: true
@@ -94,6 +148,7 @@ jobs:
           purge-created: 0
           purge-last-accessed: P1DT12H
           purge-primary-key: never
+          save: false
 
       - name: Run check
         run: nix build -L ".#checks.${SYSTEM}.${CHECK}"
