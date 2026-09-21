@@ -24,6 +24,19 @@ jobs:
 `nix-checks.yml` and `nix-audit.yml` accept `system` and `runs-on` inputs,
 defaulting to `x86_64-linux` on `ubuntu-latest`; override them together.
 
+Each check runs on its own runner, so a derivation every check needs — crane's
+`cargoArtifacts` — is built once per job unless something carries it between
+them. Name it as `prebuild` and one job builds it and saves the cache the
+checks restore:
+
+```yaml
+jobs:
+  checks:
+    uses: edpft/rust-workflows/.github/workflows/nix-checks.yml@main
+    with:
+      prebuild: .#cargoArtifacts
+```
+
 `nix-flake-update.yml` opens its pull request with the default `GITHUB_TOKEN`,
 and GitHub raises no workflow events for that token — so the pull request will
 not trigger CI. Rather than requiring a personal access token, it runs
