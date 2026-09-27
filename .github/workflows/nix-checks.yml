@@ -43,9 +43,13 @@ jobs:
     runs-on: ${{ inputs.runs-on }}
     outputs:
       checks: ${{ steps.list.outputs.checks }}
+      unchanged: ${{ steps.unchanged.outputs.unchanged }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@v5
+        with:
+          # The base commit has to be here to evaluate it.
+          fetch-depth: 0
 
       - name: Install nix
         uses: nixbuild/nix-quick-install-action@v34
@@ -77,6 +81,36 @@ jobs:
           echo "checks=$checks" >> "$GITHUB_OUTPUT"
         env:
           SYSTEM: ${{ inputs.system }}
+
+      # A check whose derivation is the base's has the base's result, so a pull
+      # request that leaves its inputs alone need not build it. The flake's
+      # filesets are the filter: no path list here to drift from them. It still
+      # reports, because a required check that never reports blocks the merge.
+      # Only pull requests skip: a push to the default branch builds everything,
+      # which is what keeps it the green baseline this comparison leans on.
+      - name: Find unchanged checks
+        id: unchanged
+        run: |
+          unchanged='[]'
+          # A pull request's checkout is its merge commit; the first parent is
+          # the base it was merged onto.
+          if [ "$EVENT" = pull_request ] && git rev-parse --verify -q HEAD^2 >/dev/null; then
+            base=$(git rev-parse HEAD^1)
+            apply='cs: builtins.mapAttrs (_: c: c.drvPath) cs'
+            # Outside the checkout, which must stay clean while it is evaluated.
+            head_json="${RUNNER_TEMP}/head.json"
+            base_json="${RUNNER_TEMP}/base.json"
+            if nix eval --json ".#checks.${SYSTEM}" --apply "$apply" > "$head_json" \
+              && nix eval --json "git+file://${PWD}?rev=${base}#checks.${SYSTEM}" --apply "$apply" > "$base_json"; then
+              unchanged=$(jq -c -n --slurpfile h "$head_json" --slurpfile b "$base_json" \
+                '$h[0] | to_entries | map(select($b[0][.key] == .value) | .key)')
+            fi
+          fi
+          echo "Unchanged since the base: $unchanged"
+          echo "unchanged=$unchanged" >> "$GITHUB_OUTPUT"
+        env:
+          SYSTEM: ${{ inputs.system }}
+          EVENT: ${{ github.event_name }}
 
   prebuild:
     name: Build shared dependencies
@@ -126,10 +160,18 @@ jobs:
       matrix:
         check: ${{ fromJson(needs.discover.outputs.checks) }}
     steps:
+      - name: Skip, unchanged since the base
+        if: ${{ contains(fromJson(needs.discover.outputs.unchanged), matrix.check) }}
+        run: echo "The derivation of ${CHECK} is the base's, so its result is too."
+        env:
+          CHECK: ${{ matrix.check }}
+
       - name: Checkout repo
+        if: ${{ !contains(fromJson(needs.discover.outputs.unchanged), matrix.check) }}
         uses: actions/checkout@v5
 
       - name: Install nix
+        if: ${{ !contains(fromJson(needs.discover.outputs.unchanged), matrix.check) }}
         uses: nixbuild/nix-quick-install-action@v34
         with:
           nix_conf: |
@@ -138,6 +180,7 @@ jobs:
             access-tokens = github.com=${{ github.token }}
 
       - name: Setup cache
+        if: ${{ !contains(fromJson(needs.discover.outputs.unchanged), matrix.check) }}
         uses: nix-community/cache-nix-action@v7
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', '**/Cargo.lock', 'rust-toolchain.toml') }}${{ inputs.prebuild != '' && '-prebuilt' || '' }}
@@ -151,6 +194,7 @@ jobs:
           save: false
 
       - name: Run check
+        if: ${{ !contains(fromJson(needs.discover.outputs.unchanged), matrix.check) }}
         run: nix build -L ".#checks.${SYSTEM}.${CHECK}"
         env:
           SYSTEM: ${{ inputs.system }}
